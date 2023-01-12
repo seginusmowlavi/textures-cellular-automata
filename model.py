@@ -5,11 +5,14 @@ from torch import nn
 
 class CAutomaton(nn.Module):
 
-    def __init__(self, num_hidden_states=9, num_hidden_features=96):
+    def __init__(self, num_hidden_states=9,
+                       num_hidden_features=96,
+                       stochastic=True):
         '''
         parameters:
             num_hidden_states = positive int, number of hidden cell-states
             num_hidden_features = positive int, number of channels in hidden layer
+            stochastic = False if all cells update according to a global clock
         '''
         super().__init__()
 
@@ -31,14 +34,15 @@ class CAutomaton(nn.Module):
                                                    self.num_states,
                                                    kernel_size=1,
                                                    padding_mode='circular'))
-        '''
-        IMPLEMENT STOCHASTIC UPDATE
-        '''
+        self.stochastic = stochastic
 
     def forward(self, x):
         perception = self.perception_filter(x)
-        updated = self.update_rule(perception)
-        return updated
+        update = self.update_rule(perception)
+        if self.stochastic:
+            mask = torch.rand(x.size()[-2],x.size()[-1])
+            update *= (mask>0.5)
+        return x+update
 
 def set_perception_kernels(automaton):
     '''
