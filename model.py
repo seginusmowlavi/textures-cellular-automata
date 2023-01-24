@@ -8,12 +8,12 @@ class CAutomaton(nn.Module):
     def __init__(self, num_hidden_states=9,
                        num_hidden_features=96,
                        stochastic=True):
-        '''
+        """
         parameters:
             num_hidden_states = positive int, number of hidden cell-states
             num_hidden_features = positive int, number of channels in hidden layer
             stochastic = False if all cells update according to a global clock
-        '''
+        """
         super().__init__()
 
         # size of the model
@@ -45,10 +45,10 @@ class CAutomaton(nn.Module):
         return x+update
 
 def set_perception_kernels(automaton):
-    '''
+    """
     Sets the perception filter to concat(identity,sobels,laplacian)
     Since this filter is not learned: requires_grad=False
-    '''
+    """
     n = automaton.num_states
     kernel = np.zeros((4*n,n,3,3)) # shape: (out_ch,in_ch,H,W)
     kernel[np.arange(n),np.arange(n),1,1] = 1 # first channels: cell-state
@@ -66,11 +66,11 @@ def set_perception_kernels(automaton):
 def train(automaton, template, rate=[2e-3]*2000+[2e-4]*6000,
                                step_min=32,
                                step_max=64):
-    '''
+    """
     Train an automaton with the following parameters:
         template = image
         rate = list of learning rates (note that #epochs = len(rate))
         (step_min,step_max) : range of the number of automaton evolution steps
                               for each training sample
-    '''
+    """
     raise NotImplementedError
