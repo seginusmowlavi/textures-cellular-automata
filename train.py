@@ -116,3 +116,4 @@ def train(automaton, template, rate=[2e-3]*2000+[2e-4]*6000,
         batch_dims = (tuple (b, h, w)) shape of training batch
     """
     raise NotImplementedError
+
