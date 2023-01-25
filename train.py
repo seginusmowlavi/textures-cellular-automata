@@ -39,8 +39,11 @@ def load_vgg():
     return vgg_model, preprocess
 
 
-def compute_texture_features(img, vgg_model, preprocess, pca=64
-                             layers_svd={0:0, 4:0, 9:0, 16:0, 23:0}):
+def compute_texture_features(img, vgg_model, preprocess,
+                             texture_layers=[0, 4, 9, 16, 23],
+                             pca_size=64
+                             pca_projs,
+                             compute_svd=True):
     """
     Compute space-invariant features with outputs of VGG-16 hidden layers.
     More precisely, an image is represented by a sequence of, for each layer,
@@ -49,63 +52,67 @@ def compute_texture_features(img, vgg_model, preprocess, pca=64
     between the vectors for the two images.
 
     Arguments:
-        img = batch of images of size (b,ch,H,W)
-        vgg_model = pretrained VGG-16
-        preprocess = function applied to images before inputting into vgg_model
-        pca (int or None) = number of components in the PCA of hidden layers
-                            If pca=None: will not compute the SVD for PCA
-        layers_svd = dict of entries {layer_idx: V[:pca, :]} where for each
-                     layer giving features, (U,S,V) is the SVD of the layer
-                     (as a reshaped (ch,H*W) array)
-                     If pca=None: values V have to be provided, else will be
-                     computed
+        img            = (array) batch of images of size (b, ch, H, W)
+        vgg_model      = pretrained VGG-16
+        preprocess     = function applied to imgs before inputting into vgg_model
+        pca_size       = (int) number of components in the PCA of hidden layers
+        texture_layers = list of layers from which to compute features
+        pca_projs      = (list of arrays) contains the PCA projections of texture
+                         layers
+                         ie. let (U,S,V) be the SVD of layer texture_layer[i]
+                         ( so lines of U are principal directions, lines of
+                           U@layer_out are principal components of
+                           layer_out=array((ch, h*w)) ),
+                         then svd[i, :, :] = U[:pca, :]
+        compute_pca    = (bool) True if svd = np.zeros(shape), in which case svd
+                         will be computed
 
     Returns:
-        features = array((n, l, pca, pca)) where l=len(layers_svd)
-        layers_svd = same as the input (or computed if pca!=None)
+        gram_features = array((n, l, pca, pca)) where l=len(layers_svd)
+        pca_projs     = same as the input (or computed if compute_svd=True)
     """
-    if pca:
-        TODO
-    else:
-        pca = next(iter(layers_svd.values())).shape[0]
-
     b, c, h, w = image.shape
-    features = np.zeros((b, 0, pca, pca))
+    gram_features = np.zeros((b, len(texture_layers), pca_size, pca_size))
+    i = 0 # track writer position in gram_features
+
     # pass img through vgg_model
     out = preprocess(img)
-    for idx, layer in vgg_model.features.named_children():
+    for idx, layer in vgg_model.features[:texture_layers[-1]+1]:
         out = layer(out)
-        # compute gram features
-        try:
-            V = layers_svd[idx]
-        except KeyError:
-            pass
-        else:
-            components = V @ out.reshape((b, -1, h*w))
-            gram = components @ components.transpose((0,2,1))
-            features = np.concatenate((features, gram), axis=1)
 
-    return features, layers_svd
+        if idx in texture_layers:
+            features = out.reshape((b, -1, h*w))
 
+            # perform PCA
+            if compute_pca:
+                feats = features[0] # normally the batch of is size 1
+                feats -= torch.mean(feats)
+                pca_projs[i] = torch.linalg.svd(feats)[0][:pca_size, :]
 
+            # compute features
+            pca_comps = pca_projs[i] @ features
+            gram_features[:, i, :, :] = pca_comps @ pca_comps.transpose((0,2,1))
 
-def texture_loss(img1, img2, vgg_model, preprocess):
-    """
-    TO DO: rewrite the whole function
-    """
-    # preprocess the inputs
-    assert img1.size() == img2.size()
-    img1, img2 = preprocess(img1), preprocess(img2)
+            i += 1
+
+    return gram_features, pca_projs
 
 
 def train(automaton, template, rate=[2e-3]*2000+[2e-4]*6000,
                                step_min=32,
-                               step_max=64):
+                               step_max=64,
+                               batch_dims=(4,128,128)):
     """
-    Train an automaton with the following parameters:
-        template = image
-        rate = list of learning rates (note that #epochs = len(rate))
-        (step_min,step_max) = range of the number of automaton evolution steps
-                              for each training sample
+    Train an automaton
+
+    Arguments:
+        automaton  = (CAutomaton) model to train
+        template   = single target image
+        rate       = list of learning rates (note that #epochs = len(rate))
+        (step_min,
+         step_max) = range of the number of automaton evolution steps
+                     for each training sample
+
+        batch_dims = (tuple (b, h, w)) shape of training batch
     """
     raise NotImplementedError

@@ -21,10 +21,11 @@ class CAutomaton(nn.Module):
         self.num_hidden_features = num_hidden_features
 
         # layers
-        self.perception_filter = nn.Conv2d(self.num_states,4*self.num_states,
-                                                 kernel_size=3,
-                                                 padding_mode='circular',
-                                                 bias=False)
+        self.perception_filter = nn.Conv2d(self.num_states,
+                                           4*self.num_states,
+                                           kernel_size=3,
+                                           padding_mode='circular',
+                                           bias=False)
         self.update_rule = nn.Sequential(nn.Conv2d(4*self.num_states,
                                                    self.num_hidden_features,
                                                    kernel_size=1,
@@ -61,16 +62,5 @@ def set_perception_kernels(automaton):
     kernel[np.arange(3*n,4*n),np.arange(n),:,:] = np.array([[1,  2,1],
                                                             [2,-12,2],
                                                             [1,  2,1]]) # Klap
-    automaton.perception_filter.weight = nn.parameter.Parameter(kernel,requires_grad=False)
-
-def train(automaton, template, rate=[2e-3]*2000+[2e-4]*6000,
-                               step_min=32,
-                               step_max=64):
-    """
-    Train an automaton with the following parameters:
-        template = image
-        rate = list of learning rates (note that #epochs = len(rate))
-        (step_min,step_max) : range of the number of automaton evolution steps
-                              for each training sample
-    """
-    raise NotImplementedError
+    automaton.perception_filter.weight = nn.parameter.Parameter(kernel,
+                                                            requires_grad=False)
