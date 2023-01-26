@@ -1,9 +1,8 @@
 import numpy as np
 import torch
 from torch import nn
-from torchvision.models import vgg16, VGG16_Weights
+from torchvision.models import vgg16
 from model import CAutomaton
-
 
 def load_vgg():
     """
@@ -11,8 +10,8 @@ def load_vgg():
         vgg_model = pretrained VGG-16
         preprocess = function applied to images before inputting into vgg_model
     """
-    pretrained_weights = VGG16_Weights.DEFAULT # DEFAULT = IMAGENET1K_V1
-    vgg_model = vgg16(weights=pretrained_weights)
+    # pretrained_weights = vgg16(pretrained=True) # VGG16_Weights.DEFAULT # DEFAULT = IMAGENET1K_V1
+    vgg_model = vgg16(pretrained=True)
     # vgg_model is vgg_model.features (conv layers)
     #              followed by a classifier (avgpool then 3 FC layers)
     # vgg_model.features = nn.Sequential(
@@ -35,16 +34,13 @@ def load_vgg():
     #     nn.Conv2d(512, 512, kernel_size=3, padding=1), nn.ReLU(inplace=True),
     #     nn.MaxPool2d(kernel_size=2, stride=2) )
     vgg_model.eval()
-    preprocess = pretrained_weights.transforms()
+    # preprocess = pretrained_weights.transforms()
 
-    return vgg_model, preprocess
+    # return vgg_model, preprocess
+    return vgg_model
 
 
-def compute_texture_features(img, vgg_model, preprocess,
-                            pca_size=64,
-                            pca_projs,
-                            compute_svd=True,
-                            compute_pca=True):
+def compute_texture_features(img, vgg_model, pca_projs, preprocess, pca_size=64, texture_layers=[0, 4, 9, 16, 23], compute_svd=True, compute_pca=True):
     """
     Compute space-invariant features with outputs of VGG-16 hidden layers.
     More precisely, an image is represented by a sequence of, for each layer,
@@ -80,7 +76,7 @@ def compute_texture_features(img, vgg_model, preprocess,
         :param compute_pca:
         :param pca_projs:
     """
-    texture_layers = [0, 4, 9, 16, 23]
+
     b, c, h, w = img.shape
     gram_features = np.zeros((b, len(texture_layers), pca_size, pca_size))
     i = 0 # track writer position in gram_features

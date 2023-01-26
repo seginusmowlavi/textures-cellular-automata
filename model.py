@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch import nn
+from torchvision.transforms import ToTensor
 
 
 class CAutomaton(nn.Module):
@@ -62,5 +63,7 @@ def set_perception_kernels(automaton):
     kernel[np.arange(3*n,4*n),np.arange(n),:,:] = np.array([[1,  2,1],
                                                             [2,-12,2],
                                                             [1,  2,1]]) # Klap
-    automaton.perception_filter.weight = nn.parameter.Parameter(kernel,
+    automaton.perception_filter.weight = nn.parameter.Parameter(torch.tensor(kernel),
                                                             requires_grad=False)
+
+    return automaton
