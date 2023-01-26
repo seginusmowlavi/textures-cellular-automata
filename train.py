@@ -1,9 +1,8 @@
 import numpy as np
 import torch
 from torch import nn
-from torchvision.models import vgg16, VGG16_Weights
+from torchvision.models import vgg16
 from model import CAutomaton
-
 
 def load_vgg():
     """
@@ -11,8 +10,8 @@ def load_vgg():
         vgg_model = pretrained VGG-16
         preprocess = function applied to images before inputting into vgg_model
     """
-    pretrained_weights = VGG16_Weights.DEFAULT # DEFAULT = IMAGENET1K_V1
-    vgg_model = vgg16(weights=pretrained_weights)
+    # pretrained_weights = vgg16(pretrained=True) # VGG16_Weights.DEFAULT # DEFAULT = IMAGENET1K_V1
+    vgg_model = vgg16(pretrained=True)
     # vgg_model is vgg_model.features (conv layers)
     #              followed by a classifier (avgpool then 3 FC layers)
     # vgg_model.features = nn.Sequential(
@@ -35,15 +34,13 @@ def load_vgg():
     #     nn.Conv2d(512, 512, kernel_size=3, padding=1), nn.ReLU(inplace=True),
     #     nn.MaxPool2d(kernel_size=2, stride=2) )
     vgg_model.eval()
-    preprocess = pretrained_weights.transforms()
-    return vgg_model, preprocess
+    # preprocess = pretrained_weights.transforms()
+
+    # return vgg_model, preprocess
+    return vgg_model
 
 
-def compute_texture_features(img, vgg_model, preprocess,
-                             texture_layers=[0, 4, 9, 16, 23],
-                             pca_size=64
-                             pca_projs,
-                             compute_svd=True):
+def compute_texture_features(img, vgg_model, pca_projs, preprocess, pca_size=64, texture_layers=[0, 4, 9, 16, 23], compute_svd=True, compute_pca=True):
     """
     Compute space-invariant features with outputs of VGG-16 hidden layers.
     More precisely, an image is represented by a sequence of, for each layer,
@@ -70,8 +67,17 @@ def compute_texture_features(img, vgg_model, preprocess,
     Returns:
         gram_features = array((n, l, pca, pca)) where l=len(layers_svd)
         pca_projs     = same as the input (or computed if compute_svd=True)
+        :param img:
+        :param vgg_model:
+        :param preprocess:
+        :param texture_layers:
+        :param pca_size:
+        :param compute_svd:
+        :param compute_pca:
+        :param pca_projs:
     """
-    b, c, h, w = image.shape
+
+    b, c, h, w = img.shape
     gram_features = np.zeros((b, len(texture_layers), pca_size, pca_size))
     i = 0 # track writer position in gram_features
 
@@ -85,7 +91,7 @@ def compute_texture_features(img, vgg_model, preprocess,
 
             # perform PCA
             if compute_pca:
-                feats = features[0] # normally the batch of is size 1
+                feats = features[0] # normally the batch of is size 1
                 feats -= torch.mean(feats)
                 pca_projs[i] = torch.linalg.svd(feats)[0][:pca_size, :]
 
@@ -116,3 +122,4 @@ def train(automaton, template, rate=[2e-3]*2000+[2e-4]*6000,
         batch_dims = (tuple (b, h, w)) shape of training batch
     """
     raise NotImplementedError
+
