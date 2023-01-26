@@ -1,7 +1,7 @@
 import numpy as np
 
-# from train import train
-# from model import CAutomaton
+from train import train
+from model import CAutomaton
 import argparse
 import cv2
 
