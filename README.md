@@ -1,6 +1,7 @@
 # textures-cellular-automata
 
 Implémentation de [2]
+
 Projet MVA S1 pour J. Delon, Y. Gousseau
 
 [Descriptif du projet](https://perso.telecom-paristech.fr/gousseau/MVA/Projets2022/TextureAC/)
@@ -16,6 +17,8 @@ Dans le principe, on suit la méthode avec ~10k paramètres de [1, §5], c'est-�
 - les projections pour réduire le nombre de channels par couche ne sont *pas* des PCA, elles sont aléatoires !
 - l'étape de calcul de matrices de Gram est supprimée (ce ne sont donc plus des "space invariant features" ?!)
 
+Rmq: la PCA coûte trop cher, on fait aussi des projections aléatoires
+
 ## À faire
 
 - training loop
@@ -24,4 +27,5 @@ Dans le principe, on suit la méthode avec ~10k paramètres de [1, §5], c'est-�
 ## Références
 
 [1] Gatys, Ecker, Bethge, Texture Synthesis Using Convolutional Neural Networks
+
 [2] Mordvintsev, Niklasson, Randazzo, Texture Generation with Neural Cellular Automata

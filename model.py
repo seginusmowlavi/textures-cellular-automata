@@ -25,24 +25,22 @@ class CAutomaton(nn.Module):
         self.perception_filter = nn.Conv2d(self.num_states,
                                            4*self.num_states,
                                            kernel_size=3,
-                                           padding_mode='circular',
                                            bias=False)
         self.update_rule = nn.Sequential(nn.Conv2d(4*self.num_states,
                                                    self.num_hidden_features,
-                                                   kernel_size=1,
-                                                   padding_mode='circular'),
+                                                   kernel_size=1),
                                          nn.ReLU(),
                                          nn.Conv2d(self.num_hidden_features,
                                                    self.num_states,
-                                                   kernel_size=1,
-                                                   padding_mode='circular'))
+                                                   kernel_size=1))
         self.stochastic = stochastic
 
     def forward(self, x):
-        perception = self.perception_filter(x)
+        y = torch.nn.functional.pad(x, (1, 1, 1, 1), mode='circular')
+        perception = self.perception_filter(y)
         update = self.update_rule(perception)
         if self.stochastic:
-            mask = torch.rand(x.size()[-2],x.size()[-1])
+            mask = torch.rand(x.size()[-2], x.size()[-1])
             update *= (mask>0.5)
         return x+update
 
@@ -52,7 +50,8 @@ def set_perception_kernels(automaton):
     Since this filter is not learned: requires_grad=False
     """
     n = automaton.num_states
-    kernel = np.zeros((4*n,n,3,3)) # shape: (out_ch,in_ch,H,W)
+    kernel = np.zeros((4*n,n,3,3), # shape: (out_ch,in_ch,H,W)
+                      dtype=np.float32) # unlike np, torch default is float32
     kernel[np.arange(n),np.arange(n),1,1] = 1 # first channels: cell-state
     kernel[np.arange(n,2*n),np.arange(n),:,:] = np.array([[-1,0,1],
                                                           [-2,0,2],
