@@ -2,19 +2,20 @@ import numpy as np
 import torch
 from torch import nn
 from torchvision.models import vgg16, VGG16_Weights
+
 from model import CAutomaton
 
-nb_channels = 64
-default_channel_pairs = {0:  (torch.eye(nb_channels, 64),
-                              torch.eye(nb_channels, 64)),
-                         4:  (torch.eye(nb_channels, 64),
-                              torch.eye(nb_channels, 64)),
-                         9:  (torch.eye(nb_channels, 128),
-                              torch.eye(nb_channels, 128)),
-                         16: (torch.eye(nb_channels, 256),
-                              torch.eye(nb_channels, 256)),
-                         23: (torch.eye(nb_channels, 512),
-                              torch.eye(nb_channels, 512))}
+num_channels = 64
+default_channel_pairs = {0:  (torch.eye(num_channels, 64),
+                              torch.eye(num_channels, 64)),
+                         4:  (torch.eye(num_channels, 64),
+                              torch.eye(num_channels, 64)),
+                         9:  (torch.eye(num_channels, 128),
+                              torch.eye(num_channels, 128)),
+                         16: (torch.eye(num_channels, 256),
+                              torch.eye(num_channels, 256)),
+                         23: (torch.eye(num_channels, 512),
+                              torch.eye(num_channels, 512))}
 
 def load_vggnet_features(colab=False):
     """
@@ -58,7 +59,9 @@ def load_vggnet_features(colab=False):
     else:
         vggnet_features = vgg16().features
         vggnet_features.load_state_dict(torch.load('vgg16_features_state_dict.pt'))
+
     vggnet_features.eval()
+    vggnet_features.requires_grad_(False)
     
     preprocess = pretrained_weights.transforms()
 
@@ -129,7 +132,7 @@ def compute_texture_features_pca(img, vggnet_features, preprocess, pca_size=32, 
 
             i += 1
 
-    return gram_features, pca_projs
+    return gram_features/gram_features.numel(), pca_projs
 
 
 def compute_texture_features(img, vggnet_features, preprocess,
@@ -184,25 +187,89 @@ def compute_texture_features(img, vggnet_features, preprocess,
 
             i += 1
 
-    return gram_features
+    return gram_features/gram_features.numel()
 
 
-def train(automaton, template, rate=[2e-3]*2000+[2e-4]*6000,
-                               step_min=32,
-                               step_max=64,
-                               batch_dims=(4,128,128)):
+def train(automaton, template, step_min=32,
+                               step_max=65,
+                               batch_dims=(4,128,128),
+                               num_vgg_ch=64,
+                               num_epochs=8000,
+                               lr=1e-3,
+                               lr_milestones=[2000],
+                               lr_decay=0.1,
+                               colab=False):
     """
     Train an automaton
 
     Arguments:
-        automaton  = (CAutomaton) model to train
-        template   = single target image
-        rate       = list of learning rates (note that #epochs = len(rate))
+        automaton     = (CAutomaton) model to train
+        template      = (tensor) single target image
         (step_min,
-         step_max) = range of the number of automaton evolution steps
-                     for each training sample
-
-        batch_dims = (tuple (b, h, w)) shape of training batch
+         step_max)    = (int, int) range of the number of automaton evolution
+                        steps for each training sample
+                        step_min included, step_max excluded
+        batch_dims    = (tuple (b, h, w)) shape of training batch
+        num_vgg_ch    = (int) for loss function with vgg: number of channels per
+                        vgg layer to keep for gram matrix computations
+        num_epochs    = (int) number of training epochs
+        lr            = (float) learning rate
+        lr_milestones = (list of ints) epochs where learning rate decays
+        lr_decay      = (float) learning rate decay
+        colab         = (bool) False if locally ran, True if on Colab
     """
-    raise NotImplementedError
+    b, h, w = batch_dims
+    losses = []
+
+    # just in case
+    template.requires_grad = False
+
+    # load vgg
+    vggnet_features, preprocess = load_vggnet_features(colab)
+    
+    # initialise optimizer
+    optimizer = torch.optim.Adam(automaton.update_rule.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                     lr_milestones,
+                                                     lr_decay)
+    
+    # training loop
+    for epoch in range(num_epochs):
+        optimizer.zero_grad()
+
+        # iterate automaton from random initial state
+        states = torch.randn((b, automaton.num_states, h, w))
+        num_steps = np.random.randint(step_min, step_max)
+        for step in range(num_steps):
+            states = automaton(states)
+        img = states[:, :3, :, :]
+
+        # extract vgg gram features
+        channel_pairs = {0: 64, 4: 64, 9: 128, 16: 256, 23: 512}
+        for key, value in channel_pairs.items():
+            channel_pairs[key] = (nn.functional.normalize(
+                                  torch.randn((num_vgg_ch, value))),
+                                  nn.functional.normalize(
+                                  torch.randn((num_vgg_ch, value))))
+        template_fts = compute_texture_features(template[np.newaxis, : , :, :], 
+                                                vggnet_features, preprocess,
+                                                channel_pairs)
+        template_fts = torch.cat([template_fts]*b)
+        img_fts = compute_texture_features(img, vggnet_features,
+                                           preprocess, channel_pairs)
+
+        # compute loss
+        loss = torch.sum((template_fts-img_fts)**2)
+        losses.append(loss.item())
+        
+        # optimize
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+
+        # message
+        if epoch%1 == 0:
+            print(f'Epoch {epoch} complete, loss = {loss.item()}')
+    
+    return losses
 
