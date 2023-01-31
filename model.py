@@ -36,7 +36,7 @@ class CAutomaton(nn.Module):
         self.stochastic = stochastic
 
     def forward(self, x):
-        y = torch.nn.functional.pad(x, (1, 1, 1, 1), mode='circular')
+        y = nn.functional.pad(x, (1, 1, 1, 1), mode='circular')
         perception = self.perception_filter(y)
         update = self.update_rule(perception)
         if self.stochastic:
@@ -62,7 +62,18 @@ def set_perception_kernels(automaton):
     kernel[np.arange(3*n,4*n),np.arange(n),:,:] = np.array([[1,  2,1],
                                                             [2,-12,2],
                                                             [1,  2,1]]) # Klap
-    automaton.perception_filter.weight = nn.parameter.Parameter(torch.tensor(kernel),
-                                                            requires_grad=False)
+    automaton.perception_filter.weight = nn.parameter.Parameter(torch.tensor(kernel))
+    automaton.perception_filter.requires_grad_(False)
 
     return automaton
+
+def initialize_to_zero(automaton):
+    """
+    Initializes update_rule weights to zero
+    """
+    automaton.update_rule[0].weight.data.zero_()
+    automaton.update_rule[0].bias.data.zero_()
+    automaton.update_rule[2].weight.data.zero_()
+    automaton.update_rule[2].bias.data.zero_()
+    
+    return(automaton)
