@@ -32,7 +32,8 @@ class CAutomaton(nn.Module):
                                          nn.ReLU(),
                                          nn.Conv2d(self.num_hidden_features,
                                                    self.num_states,
-                                                   kernel_size=1))
+                                                   kernel_size=1,
+                                                   bias=False))
         self.stochastic = stochastic
 
     def forward(self, x):
@@ -40,8 +41,8 @@ class CAutomaton(nn.Module):
         perception = self.perception_filter(y)
         update = self.update_rule(perception)
         if self.stochastic:
-            mask = torch.rand(x.size()[-2], x.size()[-1])
-            update *= (mask>0.5)
+            mask = torch.randint(0, 2, x.shape, device=x.device)
+            update *= mask
         return x+update
 
 def set_perception_kernels(automaton):
@@ -74,6 +75,5 @@ def initialize_to_zero(automaton):
     automaton.update_rule[0].weight.data.zero_()
     automaton.update_rule[0].bias.data.zero_()
     automaton.update_rule[2].weight.data.zero_()
-    automaton.update_rule[2].bias.data.zero_()
     
     return(automaton)
