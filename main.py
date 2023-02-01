@@ -20,7 +20,7 @@ if __name__ == '__main__':
     ])
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--input_texture', default='grid_0008.jpg', required=False, type=str, help='Input texture')
+    parser.add_argument('-i', '--input_texture', default='images/grid_0008.jpg', required=False, type=str, help='Input texture')
     args = parser.parse_args()
 
     input_path = args.input_texture
@@ -64,4 +64,4 @@ if __name__ == '__main__':
     # TODO: Compute the loss of the 2 vgg outputs --> dans le train. Faire les itérations.
 
     # Save output
-    cv2.imwrite('noise.jpg', img_noise)
+    cv2.imwrite('images/noise.jpg', img_noise)

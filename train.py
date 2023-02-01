@@ -3,8 +3,6 @@ import torch
 from torch import nn
 from torchvision.models import vgg16, VGG16_Weights
 
-from model import CAutomaton
-
 num_channels = 64
 default_channel_pairs = {0:  (torch.eye(num_channels, 64),
                               torch.eye(num_channels, 64)),
@@ -17,10 +15,12 @@ default_channel_pairs = {0:  (torch.eye(num_channels, 64),
                          23: (torch.eye(num_channels, 512),
                               torch.eye(num_channels, 512))}
 
-def load_vggnet_features(colab=False):
+def load_vggnet_features(device):
     """
     Arguments:
-        colab = (bool) False if locally ran, True if on Colab
+        device = (int or torch.device)
+    
+    Note: modifies automaton device to match template
 
     Returns:
         vggnet_features = first half of VGG-16 (convolutions)
@@ -51,7 +51,7 @@ def load_vggnet_features(colab=False):
     #     nn.MaxPool2d(kernel_size=2, stride=2) )
 
     pretrained_weights = VGG16_Weights.DEFAULT # DEFAULT = IMAGENET1K_V1
-    if colab:
+    if device!='cpu': # this usually means we're on Colab
         # if to be done locally: maybe try
         #    import ssl
         #    ssl._create_default_https_context = ssl._create_unverified_context
@@ -60,6 +60,7 @@ def load_vggnet_features(colab=False):
         vggnet_features = vgg16().features
         vggnet_features.load_state_dict(torch.load('vgg16_features_state_dict.pt'))
 
+    vggnet_features.to(device)
     vggnet_features.eval()
     vggnet_features.requires_grad_(False)
     
@@ -71,7 +72,11 @@ def load_vggnet_features(colab=False):
 # torch.linalg.svd is way too slow for such big matrices!!!
 # (first svd computation takes 2min, 10GB on Colab)
 # Colab may complain about memory usage
-def compute_texture_features_pca(img, vggnet_features, preprocess, pca_size=32, texture_layers=[0, 4, 9, 16, 23], pca_projs=[], compute_pca=True):
+def compute_texture_features_pca(img, vggnet_features, preprocess,
+                                 pca_size=32,
+                                 texture_layers=[0, 4, 9, 16, 23],
+                                 pca_projs=[],
+                                 compute_pca=True):
     """
     Compute space-invariant features with outputs of VGG-16 hidden layers.
     More precisely, an image is represented by a sequence of, for each layer,
@@ -95,6 +100,8 @@ def compute_texture_features_pca(img, vggnet_features, preprocess, pca_size=32, 
                           then pca_projs[i, :, :] = U[:pca_size, :]
         compute_pca     = (bool) True if pca_projs=[], in which case pca_projs
                           will be computed
+    
+    Note: img, vggnet_features and pca_projs must be on same device
 
     Returns:
         gram_features = tensor((n, l, pca, pca)) where l=len(texture_layers)
@@ -108,7 +115,8 @@ def compute_texture_features_pca(img, vggnet_features, preprocess, pca_size=32, 
         :param compute_pca:
         :param pca_projs:
     """
-    gram_features = torch.zeros((len(img), len(texture_layers), pca_size, pca_size))
+    gram_features = torch.zeros((len(img), len(texture_layers),
+                                pca_size, pca_size), device=img.device)
     i = 0 # track writer position in gram_features
 
     # pass img through vggnet_features
@@ -155,7 +163,9 @@ def compute_texture_features(img, vggnet_features, preprocess,
                                   which reduce the number of channels of layer
                                   vggnet_features[key]
     
-    Note: all channel_pairs[key][i] must have same first dimension (ie length)
+    Notes:
+        - all channel_pairs[key][i] must have same first dimension (ie length)
+        - img, vggnet_features and channel_pairs must be on same device
 
     Returns:
         gram_features = tensor((n, l, m, m)) where l=len(channel_pairs) and
@@ -166,7 +176,8 @@ def compute_texture_features(img, vggnet_features, preprocess,
     b = len(img)
     l = len(channel_pairs)
     m = len(next(iter(channel_pairs.values()))[0])
-    gram_features = torch.zeros((b, l, m, m))
+
+    gram_features = torch.zeros((b, l, m, m), device=img.device)
     i = 0 # track writer position in gram_features
 
     # pass img through vggnet_features
@@ -197,8 +208,7 @@ def train(automaton, template, step_min=32,
                                num_epochs=8000,
                                lr=1e-3,
                                lr_milestones=[2000],
-                               lr_decay=0.1,
-                               colab=False):
+                               lr_decay=0.1):
     """
     Train an automaton
 
@@ -217,7 +227,13 @@ def train(automaton, template, step_min=32,
         lr_milestones = (list of ints) epochs where learning rate decays
         lr_decay      = (float) learning rate decay
         colab         = (bool) False if locally ran, True if on Colab
+    
+    Returns:
+        losses = (list of floats) history of losses for each epoch
     """
+    device = template.device
+    automaton.to(device)
+
     b, h, w = batch_dims
     losses = []
 
@@ -225,7 +241,7 @@ def train(automaton, template, step_min=32,
     template.requires_grad = False
 
     # load vgg
-    vggnet_features, preprocess = load_vggnet_features(colab)
+    vggnet_features, preprocess = load_vggnet_features(device)
     
     # initialise optimizer
     optimizer = torch.optim.Adam(automaton.update_rule.parameters(), lr=lr)
@@ -238,7 +254,7 @@ def train(automaton, template, step_min=32,
         optimizer.zero_grad()
 
         # iterate automaton from random initial state
-        states = torch.randn((b, automaton.num_states, h, w))
+        states = torch.randn((b, automaton.num_states, h, w), device=device)
         num_steps = np.random.randint(step_min, step_max)
         for step in range(num_steps):
             states = automaton(states)
@@ -248,9 +264,9 @@ def train(automaton, template, step_min=32,
         channel_pairs = {0: 64, 4: 64, 9: 128, 16: 256, 23: 512}
         for key, value in channel_pairs.items():
             channel_pairs[key] = (nn.functional.normalize(
-                                  torch.randn((num_vgg_ch, value))),
+                               torch.randn((num_vgg_ch, value), device=device)),
                                   nn.functional.normalize(
-                                  torch.randn((num_vgg_ch, value))))
+                               torch.randn((num_vgg_ch, value), device=device)))
         template_fts = compute_texture_features(template[np.newaxis, : , :, :], 
                                                 vggnet_features, preprocess,
                                                 channel_pairs)
@@ -268,7 +284,7 @@ def train(automaton, template, step_min=32,
         scheduler.step()
 
         # message
-        if epoch%1 == 0:
+        if epoch%10 == 0:
             print(f'Epoch {epoch} complete, loss = {loss.item()}')
     
     return losses
