@@ -2,6 +2,9 @@ import numpy as np
 import torch
 from torch import nn
 from torchvision.models import vgg16, VGG16_Weights
+from torchvision.utils import save_image
+from torchvision.transforms import transforms
+
 
 num_channels = 64
 default_channel_pairs = {0:  (torch.eye(num_channels, 64),
@@ -14,6 +17,15 @@ default_channel_pairs = {0:  (torch.eye(num_channels, 64),
                               torch.eye(num_channels, 256)),
                          23: (torch.eye(num_channels, 512),
                               torch.eye(num_channels, 512))}
+
+preprocess_bis = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+def to_rgb(x):
+  return x[...,:3,:,:]+0.5
 
 def load_vggnet_features(device):
     """
@@ -68,80 +80,6 @@ def load_vggnet_features(device):
 
     return vggnet_features, preprocess
 
-# DO NOT USE locally with compute_pca=True
-# torch.linalg.svd is way too slow for such big matrices!!!
-# (first svd computation takes 2min, 10GB on Colab)
-# Colab may complain about memory usage
-def compute_texture_features_pca(img, vggnet_features, preprocess,
-                                 pca_size=32,
-                                 texture_layers=[0, 4, 9, 16, 23],
-                                 pca_projs=[],
-                                 compute_pca=True):
-    """
-    Compute space-invariant features with outputs of VGG-16 hidden layers.
-    More precisely, an image is represented by a sequence of, for each layer,
-    a Gram matrix of cross-correlations between channels. The Gram matrices are
-    flattened then concatenated into a vector. We then compute the L2 loss
-    between the vectors for the two images.
-
-    Arguments:
-        img             = (tensor) batch of images of size (b, ch, H, W)
-        vggnet_features = pretrained VGG-16
-        preprocess      = function applied to imgs before inputting into
-                          vggnet_features
-        pca_size        = (int) number of components in the PCA of hidden layers
-        texture_layers  = list of layers from which to compute features
-        pca_projs       = (list of tensors) contains the PCA projections of
-                          texture layers
-                          ie. let (U,S,V) be the SVD of layer texture_layer[i]
-                          ( so lines of U are principal directions, lines of
-                            U@layer_out are principal components of
-                            layer_out=array((ch, h*w)) ),
-                          then pca_projs[i, :, :] = U[:pca_size, :]
-        compute_pca     = (bool) True if pca_projs=[], in which case pca_projs
-                          will be computed
-    
-    Note: img, vggnet_features and pca_projs must be on same device
-
-    Returns:
-        gram_features = tensor((n, l, pca, pca)) where l=len(texture_layers)
-        pca_projs     = same as the input (or computed if compute_svd=True)
-        :param img:
-        :param vggnet_features:
-        :param preprocess:
-        :param texture_layers:
-        :param pca_size:
-        :param compute_svd:
-        :param compute_pca:
-        :param pca_projs:
-    """
-    gram_features = torch.zeros((len(img), len(texture_layers),
-                                pca_size, pca_size), device=img.device)
-    i = 0 # track writer position in gram_features
-
-    # pass img through vggnet_features
-    out = preprocess(img)
-    for idx, layer in enumerate(vggnet_features[:texture_layers[-1]+1]):
-        out = layer(out)
-
-        if idx in texture_layers:
-            b, c, h, w = out.shape
-            features = out.reshape((b, c, h*w))
-
-            # perform PCA
-            if compute_pca:
-                feats = features[0] # normally the batch of is size 1
-                feats -= torch.mean(feats)
-                pca_projs.append(torch.linalg.svd(feats)[0][:pca_size, :])
-
-            # compute features
-            pca_comps = pca_projs[i] @ features
-            gram_features[:, i, :, :] = pca_comps @ pca_comps.transpose(1,2)
-
-            i += 1
-
-    return gram_features/gram_features.numel(), pca_projs
-
 
 def compute_texture_features(img, vggnet_features, preprocess,
                              channel_pairs=default_channel_pairs):
@@ -181,7 +119,7 @@ def compute_texture_features(img, vggnet_features, preprocess,
     i = 0 # track writer position in gram_features
 
     # pass img through vggnet_features
-    out = preprocess(img)
+    out = preprocess_bis(img)
     for idx, layer in enumerate(vggnet_features[:max(channel_pairs.keys())+1]):
         out = layer(out)
 
@@ -253,8 +191,10 @@ def train(automaton, template, step_min=32,
     for epoch in range(num_epochs):
         optimizer.zero_grad()
 
+
         # iterate automaton from random initial state
-        states = torch.randn((b, automaton.num_states, h, w), device=device)
+        #states = torch.randn((b, automaton.num_states, h, w), device=device)
+        states = torch.rand((b, automaton.num_states, h, w), device=device)
         num_steps = np.random.randint(step_min, step_max)
         for step in range(num_steps):
             states = automaton(states)
@@ -275,7 +215,8 @@ def train(automaton, template, step_min=32,
                                            preprocess, channel_pairs)
 
         # compute loss
-        loss = torch.sum((template_fts-img_fts)**2)
+        overflow_loss = (states - states.clamp(-1.0, 1.0)).abs().sum()
+        loss = torch.sum((template_fts-img_fts)**2) + overflow_loss
         losses.append(loss.item())
         
         # optimize
@@ -286,6 +227,5 @@ def train(automaton, template, step_min=32,
         # message
         if epoch%10 == 0:
             print(f'Epoch {epoch} complete, loss = {loss.item()}')
-    
-    return losses
 
+    return losses
