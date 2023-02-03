@@ -25,7 +25,7 @@ class CAutomaton(nn.Module):
         self.perception_filter = nn.Conv2d(self.num_states,
                                            4*self.num_states,
                                            kernel_size=3,
-                                           bias=False)
+                                           bias=True)
         self.update_rule = nn.Sequential(nn.Conv2d(4*self.num_states,
                                                    self.num_hidden_features,
                                                    kernel_size=1),
@@ -72,8 +72,8 @@ def initialize_to_zero(automaton):
     """
     Initializes update_rule weights to zero
     """
-    automaton.update_rule[0].weight.data.zero_()
-    automaton.update_rule[0].bias.data.zero_()
+    #automaton.update_rule[0].weight.data.zero_()
+    #automaton.update_rule[0].bias.data.zero_()
     automaton.update_rule[2].weight.data.zero_()
     
     return(automaton)
