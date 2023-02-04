@@ -9,7 +9,8 @@ class CAutomaton(nn.Module):
     def __init__(self, num_hidden_states=9,
                        num_hidden_features=96,
                        stochastic=True,
-                       bias=False):
+                       bias=False,
+                       with_first_order=True):
         """
         Parameters:
             num_hidden_states   = (int) number of hidden cell-states
@@ -17,12 +18,19 @@ class CAutomaton(nn.Module):
             stochastic          = (bool) False if all cells update according to
                                   a global clock
             bias                = (bool) bias of second layer of update_rule
+            with_first_order    = (bool) which perception filter to use
+                                         True: use identity, 2 Sobels, Laplacian
+                                         False: use identity and 3 second-order
+                                         operators
         """
         super().__init__()
 
         # size of the model
         self.num_states = 3+num_hidden_states
         self.num_hidden_features = num_hidden_features
+
+        # perception filter option
+        self.with_first_order = with_first_order
 
         # layers
         self.perception_filter = nn.Conv2d(self.num_states,
@@ -48,15 +56,10 @@ class CAutomaton(nn.Module):
             update *= mask
         return x+update
 
-def set_perception_kernels(automaton, with_first_order=True):
+def set_perception_kernels(automaton):
     """
     Sets the perception filter.
     Since this filter is not learned: requires_grad=False
-
-    Arguments:
-        automaton        = (CAutomaton)
-        with_first_order = (bool) if True: use identity, 2 Sobels, Laplacian
-                           if False: use identity and 3 second-order operators
     """
     n = automaton.num_states
     K = np.zeros((4*n,n,3,3), # shape: (out_ch,in_ch,H,W)
@@ -65,7 +68,7 @@ def set_perception_kernels(automaton, with_first_order=True):
     # identity
     K[np.arange(n),np.arange(n),1,1] = 1
 
-    if with_first_order:
+    if automaton.with_first_order:
         # Sobel_x
         K[np.arange(n,2*n),np.arange(n),:,:] = np.array([[-1,0,1],
                                                          [-2,0,2],
