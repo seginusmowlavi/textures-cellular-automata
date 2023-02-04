@@ -11,7 +11,7 @@ class CAutomaton(nn.Module):
                        stochastic=True,
                        bias=False):
         """
-        parameters:
+        Parameters:
             num_hidden_states   = (int) number of hidden cell-states
             num_hidden_features = (int) number of channels in hidden layer
             stochastic          = (bool) False if all cells update according to
@@ -50,7 +50,7 @@ class CAutomaton(nn.Module):
 
 def set_perception_kernels(automaton):
     """
-    Sets the perception filter to concat(identity,sobels,laplacian)
+    Sets the perception filter to stack(identity, sobels, laplacian)
     Since this filter is not learned: requires_grad=False
     """
     n = automaton.num_states

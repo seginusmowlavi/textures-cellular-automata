@@ -7,6 +7,7 @@ from torchvision.transforms import transforms
 
 
 num_channels = 64
+default_channels = {0: 64, 4: 64, 9: 128, 16: 256, 23: 512}
 default_channel_pairs = {0:  (torch.eye(num_channels, 64),
                               torch.eye(num_channels, 64)),
                          4:  (torch.eye(num_channels, 64),
@@ -24,8 +25,6 @@ preprocess = transforms.Compose([
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
-def to_rgb(x):
-  return x[...,:3,:,:]+0.5
 
 def load_vggnet_features(device):
     """
@@ -77,36 +76,36 @@ def load_vggnet_features(device):
     return vggnet_features
 
 
-def compute_texture_features(img, vggnet_features, preprocess=preprocess,
-                             channel_pairs=default_channel_pairs):
+def compute_gram_features(img, vggnet_features,
+                          channel_pairs=default_channel_pairs,
+                          preprocess=preprocess):
     """
     Compute space-invariant features with outputs of VGG-16 hidden layers.
     More precisely, an image is represented by a sequence of, for each layer,
     a Gram matrix of cross-correlations between channels. The Gram matrices are
-    flattened then concatenated into a vector. We then compute the L2 loss
-    between the vectors for the two images.
+    flattened then concatenated into a vector.
 
     Arguments:
         img             = (tensor) batch of images of size (b, ch, H, W)
         vggnet_features = pretrained VGG-16
-        preprocess      = function applied to imgs before inputting into
-                          vggnet_features
         channel_pairs   = (dict of tuples)
                           key   = (int) layer from which to compute features
                           value = (tuple) contains two projection matrices
                                   which reduce the number of channels of layer
                                   vggnet_features[key]
+        preprocess      = function applied to imgs before inputting into
+                          vggnet_features
     
     Notes:
         - all channel_pairs[key][i] must have same first dimension (ie length)
         - img, vggnet_features and channel_pairs must be on same device
 
     Returns:
-        gram_features = tensor((n, l, m, m)) where l=len(channel_pairs) and
+        gram_features = tensor((b, l, m, m)) where l=len(channel_pairs) and
                                                    m=len(channel_pairs[key][i])
-
-
     """
+    if len(img.shape)==3:
+        img = img[np.newaxis, :, :, :]
     b = len(img)
     l = len(channel_pairs)
     m = len(next(iter(channel_pairs.values()))[0])
@@ -135,10 +134,56 @@ def compute_texture_features(img, vggnet_features, preprocess=preprocess,
     return gram_features/gram_features.numel()
 
 
+def compute_mean_features(img, vggnet_features,
+                          channels=default_channels,
+                          preprocess=preprocess):
+    """
+    Compute space-invariant features with outputs of VGG-16 hidden layers.
+    More precisely, an image is represented by the means of each channel of
+    specified VGG-16 layers.
+
+    Arguments:
+        img             = (tensor) batch of images of size (b, ch, H, W)
+        vggnet_features = pretrained VGG-16
+        channels        = (dict of ints)
+                          key   = (int) layer from which to compute features
+                          value = (int) size of the layer
+        preprocess      = function applied to imgs before inputting into
+                          vggnet_features
+    
+    Notes: img and vggnet_features must be on same device
+
+    Returns:
+        mean_features = tensor((b, l)) where l=sum(channels.values())
+    """
+    if len(img.shape)==3:
+        img = img[np.newaxis, :, :, :]
+    b = len(img)
+    l = sum(channels.values())
+
+    mean_features = torch.zeros((b, l), device=img.device)
+    i = 0 # track writer position in mean_features
+    
+    # pass img through vggnet_features
+    out = preprocess(img)
+    for idx, layer in enumerate(vggnet_features[:max(channels.keys())+1]):
+        out = layer(out)
+
+        if idx in channels:
+            b, c, h, w = out.shape
+
+            mean_features[:, i:i+channels[idx]] = out.sum(dim=(2,3))/(h*w)
+
+            i += channels[idx]
+    
+    return mean_features
+
+
 def train(automaton, template, step_min=32,
                                step_max=65,
                                batch_dims=(4,128,128),
                                pool_size=128,
+                               vgg_mode='gram',
                                num_vgg_ch=64,
                                num_epochs=8000,
                                lr=1e-3,
@@ -156,8 +201,10 @@ def train(automaton, template, step_min=32,
                         step_min included, step_max excluded
         batch_dims    = (tuple (b, h, w)) shape of training batch
         pool_size     = (int) number of states stored in checkpoint pool
-        num_vgg_ch    = (int) for loss function with vgg: number of channels per
-                        vgg layer to keep for gram matrix computations
+        vgg_mode      = 'gram' if we compute gram matrices of vgg channels
+                        'mean' if we compute mean of vgg channels
+        num_vgg_ch    = (int) if vgg_mode=='gram': number of channels per vgg
+                        layer to keep for gram matrix computations
         num_epochs    = (int) number of training epochs
         lr            = (float) learning rate
         lr_milestones = (list of ints) epochs where learning rate decays
@@ -208,22 +255,28 @@ def train(automaton, template, step_min=32,
             domain_loss += (states - states.clamp(0.0, 1.0)).abs().sum()
         img = states[:, :3, :, :]
 
-        # extract vgg gram features
-        channel_pairs = {0: 64, 4: 64, 9: 128, 16: 256, 23: 512}
-        for key, value in channel_pairs.items():
-            channel_pairs[key] = (nn.functional.normalize(
+        # extract vgg features
+        if vgg_mode=='gram':
+            channel_pairs = {}
+            for key, value in default_channels.items():
+                channel_pairs[key] = (nn.functional.normalize(
                                torch.randn((num_vgg_ch, value), device=device)),
-                                  nn.functional.normalize(
+                                      nn.functional.normalize(
                                torch.randn((num_vgg_ch, value), device=device)))
-        template_fts = compute_texture_features(template[np.newaxis, : , :, :], 
-                                                vggnet_features, preprocess,
-                                                channel_pairs)
-        template_fts = torch.cat([template_fts]*b)
-        img_fts = compute_texture_features(img, vggnet_features,
-                                           preprocess, channel_pairs)
+            template_fts = compute_gram_features(template, vggnet_features,
+                                                 channel_pairs)
+            template_fts = torch.cat([template_fts]*b)
+            img_fts = compute_gram_features(img, vggnet_features, channel_pairs)
+        elif vgg_mode=='mean':
+            template_fts = compute_mean_features(template, vggnet_features)
+            template_fts = torch.cat([template_fts]*b)
+            img_fts = compute_mean_features(img, vggnet_features)
 
         # compute loss
-        texture_loss = ((template_fts-img_fts)**2).sum(dim=(1, 2, 3))
+        if vgg_mode=='gram':
+            texture_loss = ((template_fts-img_fts)**2).sum(dim=(1, 2, 3))
+        elif vgg_mode=='mean':
+            texture_loss = ((template_fts-img_fts)**2).sum(dim=1)
         loss = texture_loss.sum() + domain_loss
         
         # optimize
