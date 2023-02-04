@@ -18,7 +18,7 @@ default_channel_pairs = {0:  (torch.eye(num_channels, 64),
                          23: (torch.eye(num_channels, 512),
                               torch.eye(num_channels, 512))}
 
-preprocess_bis = transforms.Compose([
+preprocess = transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -36,7 +36,6 @@ def load_vggnet_features(device):
 
     Returns:
         vggnet_features = first half of VGG-16 (convolutions)
-        preprocess      = preprocessing function
     """
     # net = vgg16() is composed of:
     #     net.features (conv layers)
@@ -62,12 +61,11 @@ def load_vggnet_features(device):
     #     nn.Conv2d(512, 512, kernel_size=3, padding=1), nn.ReLU(inplace=True),
     #     nn.MaxPool2d(kernel_size=2, stride=2) )
 
-    pretrained_weights = VGG16_Weights.DEFAULT # DEFAULT = IMAGENET1K_V1
     if device!='cpu': # this usually means we're on Colab
         # if to be done locally: maybe try
         #    import ssl
         #    ssl._create_default_https_context = ssl._create_unverified_context
-        vggnet_features = vgg16(weights=pretrained_weights).features
+        vggnet_features = vgg16(weights=VGG16_Weights.DEFAULT).features
     else:
         vggnet_features = vgg16().features
         vggnet_features.load_state_dict(torch.load('vgg16_features_state_dict.pt'))
@@ -75,13 +73,11 @@ def load_vggnet_features(device):
     vggnet_features.to(device)
     vggnet_features.eval()
     vggnet_features.requires_grad_(False)
-    
-    preprocess = pretrained_weights.transforms()
 
-    return vggnet_features, preprocess
+    return vggnet_features
 
 
-def compute_texture_features(img, vggnet_features, preprocess,
+def compute_texture_features(img, vggnet_features, preprocess=preprocess,
                              channel_pairs=default_channel_pairs):
     """
     Compute space-invariant features with outputs of VGG-16 hidden layers.
@@ -119,7 +115,7 @@ def compute_texture_features(img, vggnet_features, preprocess,
     i = 0 # track writer position in gram_features
 
     # pass img through vggnet_features
-    out = preprocess_bis(img)
+    out = preprocess(img)
     for idx, layer in enumerate(vggnet_features[:max(channel_pairs.keys())+1]):
         out = layer(out)
 
@@ -142,6 +138,7 @@ def compute_texture_features(img, vggnet_features, preprocess,
 def train(automaton, template, step_min=32,
                                step_max=65,
                                batch_dims=(4,128,128),
+                               pool_size=128,
                                num_vgg_ch=64,
                                num_epochs=8000,
                                lr=1e-3,
@@ -158,6 +155,7 @@ def train(automaton, template, step_min=32,
                         steps for each training sample
                         step_min included, step_max excluded
         batch_dims    = (tuple (b, h, w)) shape of training batch
+        pool_size     = (int) number of states stored in checkpoint pool
         num_vgg_ch    = (int) for loss function with vgg: number of channels per
                         vgg layer to keep for gram matrix computations
         num_epochs    = (int) number of training epochs
@@ -173,31 +171,41 @@ def train(automaton, template, step_min=32,
     automaton.to(device)
 
     b, h, w = batch_dims
-    losses = []
 
     # just in case
     template.requires_grad = False
 
     # load vgg
-    vggnet_features, preprocess = load_vggnet_features(device)
+    vggnet_features = load_vggnet_features(device)
     
     # initialise optimizer
     optimizer = torch.optim.Adam(automaton.update_rule.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
                                                      lr_milestones,
                                                      lr_decay)
+    # initialise algorithm
+    pool = torch.rand((pool_size, automaton.num_states, h, w), device=device)
+    pool_loss = 1e8*np.ones((pool_size)) # empirically, losses are <1e8
+    texture_losses, domain_losses, losses = [], [], []
     
     # training loop
     for epoch in range(num_epochs):
         optimizer.zero_grad()
 
+        # this loss term ensures that cell states stay in [0,1]
+        domain_loss = 0
+
+        # pick states from pool
+        batch_idxs = np.random.default_rng().choice(pool_size, b, replace=False)
+        idx = np.where(pool_loss==max(pool_loss[batch_idxs]))[0][0]
+        pool[idx] = torch.rand((automaton.num_states, h, w), device=device)
+        states = pool[batch_idxs]
 
         # iterate automaton from random initial state
-        #states = torch.randn((b, automaton.num_states, h, w), device=device)
-        states = torch.rand((b, automaton.num_states, h, w), device=device)
         num_steps = np.random.randint(step_min, step_max)
         for step in range(num_steps):
             states = automaton(states)
+            domain_loss += (states - states.clamp(0.0, 1.0)).abs().sum()
         img = states[:, :3, :, :]
 
         # extract vgg gram features
@@ -215,17 +223,25 @@ def train(automaton, template, step_min=32,
                                            preprocess, channel_pairs)
 
         # compute loss
-        overflow_loss = (states - states.clamp(-1.0, 1.0)).abs().sum()
-        loss = torch.sum((template_fts-img_fts)**2) + overflow_loss
-        losses.append(loss.item())
+        texture_loss = ((template_fts-img_fts)**2).sum(dim=(1, 2, 3))
+        loss = texture_loss.sum() + domain_loss
         
         # optimize
         loss.backward()
         optimizer.step()
         scheduler.step()
 
+        # update pool
+        pool[batch_idxs] = states.detach()
+        pool_loss[batch_idxs] = texture_loss.tolist()
+
+        # record loss
+        texture_losses.append(texture_loss.sum().item())
+        domain_losses.append(domain_loss.item())
+        losses.append(loss.item())
+
         # message
-        if epoch%10 == 0:
+        if epoch%100 == 0:
             print(f'Epoch {epoch} complete, loss = {loss.item()}')
 
-    return losses
+    return texture_losses, domain_losses, losses

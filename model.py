@@ -8,12 +8,15 @@ class CAutomaton(nn.Module):
 
     def __init__(self, num_hidden_states=9,
                        num_hidden_features=96,
-                       stochastic=True):
+                       stochastic=True,
+                       bias=False):
         """
         parameters:
-            num_hidden_states = positive int, number of hidden cell-states
-            num_hidden_features = positive int, number of channels in hidden layer
-            stochastic = False if all cells update according to a global clock
+            num_hidden_states   = (int) number of hidden cell-states
+            num_hidden_features = (int) number of channels in hidden layer
+            stochastic          = (bool) False if all cells update according to
+                                  a global clock
+            bias                = (bool) bias of second layer of update_rule
         """
         super().__init__()
 
@@ -24,8 +27,8 @@ class CAutomaton(nn.Module):
         # layers
         self.perception_filter = nn.Conv2d(self.num_states,
                                            4*self.num_states,
-                                           kernel_size=3,
-                                           bias=True)
+                                           kernel_size=3)
+        self.bias = bias
         self.update_rule = nn.Sequential(nn.Conv2d(4*self.num_states,
                                                    self.num_hidden_features,
                                                    kernel_size=1),
@@ -33,7 +36,7 @@ class CAutomaton(nn.Module):
                                          nn.Conv2d(self.num_hidden_features,
                                                    self.num_states,
                                                    kernel_size=1,
-                                                   bias=False))
+                                                   bias=self.bias))
         self.stochastic = stochastic
 
     def forward(self, x):
@@ -70,10 +73,11 @@ def set_perception_kernels(automaton):
 
 def initialize_to_zero(automaton):
     """
-    Initializes update_rule weights to zero
+    Initializes last layer weights to zero
+    (Since only one layer is zero: avoids gradient being zero)
     """
-    #automaton.update_rule[0].weight.data.zero_()
-    #automaton.update_rule[0].bias.data.zero_()
     automaton.update_rule[2].weight.data.zero_()
+    if automaton.bias:
+        automaton.update_rule[2].bias.data.zero_()
     
     return(automaton)
