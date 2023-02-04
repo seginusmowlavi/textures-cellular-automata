@@ -48,25 +48,51 @@ class CAutomaton(nn.Module):
             update *= mask
         return x+update
 
-def set_perception_kernels(automaton):
+def set_perception_kernels(automaton, with_first_order=True):
     """
-    Sets the perception filter to stack(identity, sobels, laplacian)
+    Sets the perception filter.
     Since this filter is not learned: requires_grad=False
+
+    Arguments:
+        automaton        = (CAutomaton)
+        with_first_order = (bool) if True: use identity, 2 Sobels, Laplacian
+                           if False: use identity and 3 second-order operators
     """
     n = automaton.num_states
-    kernel = np.zeros((4*n,n,3,3), # shape: (out_ch,in_ch,H,W)
+    K = np.zeros((4*n,n,3,3), # shape: (out_ch,in_ch,H,W)
                       dtype=np.float32) # unlike np, torch default is float32
-    kernel[np.arange(n),np.arange(n),1,1] = 1 # first channels: cell-state
-    kernel[np.arange(n,2*n),np.arange(n),:,:] = np.array([[-1,0,1],
-                                                          [-2,0,2],
-                                                          [-1,0,1]]) # Kx
-    kernel[np.arange(2*n,3*n),np.arange(n),:,:] = np.array([[-1,-2,-1],
-                                                            [ 0, 0, 0],
-                                                            [ 1, 2, 1]]) # Ky
-    kernel[np.arange(3*n,4*n),np.arange(n),:,:] = np.array([[1,  2,1],
-                                                            [2,-12,2],
-                                                            [1,  2,1]]) # Klap
-    automaton.perception_filter.weight = nn.parameter.Parameter(torch.tensor(kernel))
+
+    # identity
+    K[np.arange(n),np.arange(n),1,1] = 1
+
+    if with_first_order:
+        # Sobel_x
+        K[np.arange(n,2*n),np.arange(n),:,:] = np.array([[-1,0,1],
+                                                         [-2,0,2],
+                                                         [-1,0,1]])
+        # Sobel_y
+        K[np.arange(2*n,3*n),np.arange(n),:,:] = np.array([[-1,-2,-1],
+                                                           [ 0, 0, 0],
+                                                           [ 1, 2, 1]])
+        # Laplacian
+        K[np.arange(3*n,4*n),np.arange(n),:,:] = np.array([[1,  2,1],
+                                                           [2,-12,2],
+                                                           [1,  2,1]])
+    else:
+        # d^2/dx^2
+        K[np.arange(n,2*n),np.arange(n),:,:] = np.array([[1,-2,1],
+                                                         [2,-4,2],
+                                                         [1,-2,1]])
+        # d^2/dxy
+        K[np.arange(2*n,3*n),np.arange(n),:,:] = np.array([[ 1,0,-1],
+                                                           [ 0,0, 0],
+                                                           [-1,0, 1]])
+        # d^2/dy^2
+        K[np.arange(3*n,4*n),np.arange(n),:,:] = np.array([[ 1, 2, 1],
+                                                           [-2,-4,-2],
+                                                           [ 1, 2, 1]])
+
+    automaton.perception_filter.weight = nn.parameter.Parameter(torch.tensor(K))
     automaton.perception_filter.requires_grad_(False)
 
     return automaton
