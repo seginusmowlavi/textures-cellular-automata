@@ -56,7 +56,7 @@ class CAutomaton(nn.Module):
             update *= mask
         return x+update
 
-def set_perception_kernels(automaton):
+def set_perception_kernels(automaton, angle=0):
     """
     Sets the perception filter.
     Since this filter is not learned: requires_grad=False
@@ -70,13 +70,15 @@ def set_perception_kernels(automaton):
 
     if automaton.with_first_order:
         # Sobel_x
-        K[np.arange(n,2*n),np.arange(n),:,:] = np.array([[-1,0,1],
-                                                         [-2,0,2],
-                                                         [-1,0,1]])
+        Kx = np.array([[-1,0,1],
+                       [-2,0,2],
+                       [-1,0,1]])
         # Sobel_y
-        K[np.arange(2*n,3*n),np.arange(n),:,:] = np.array([[-1,-2,-1],
-                                                           [ 0, 0, 0],
-                                                           [ 1, 2, 1]])
+        Ky = np.array([[-1,-2,-1],
+                       [ 0, 0, 0],
+                       [ 1, 2, 1]])
+        K[np.arange(n,2*n),np.arange(n),:,:] = np.cos(angle)*Kx+np.sin(angle)*Ky
+        K[np.arange(2*n,3*n),np.arange(n),:,:] = np.cos(angle)*Ky-np.sin(angle)*Kx
         # Laplacian
         K[np.arange(3*n,4*n),np.arange(n),:,:] = np.array([[1,  2,1],
                                                            [2,-12,2],
